@@ -2,9 +2,6 @@
 set -euo pipefail
 umask 077
 
-# SOC-001: Simulated SSH Brute-Force Detection
-# Detect 5 failures per IP within 5 minutes.
-# Suppress repeat alerts for 5 minutes.
 
 base="$HOME/cloud-soc"
 state_dir="$base/state"
