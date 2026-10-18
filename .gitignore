@@ -1,0 +1,32 @@
+
+# SSH private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+secrets.json
+credentials.json
+
+# Python generated files
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# AWS local credentials
+.aws/
+aws_access_key*
+
+# Terraform state (future infrastructure work)
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Logs and system files
+*.log
+.DS_Store
