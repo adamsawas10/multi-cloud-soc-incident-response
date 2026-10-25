@@ -86,7 +86,17 @@ Completed tests include:
 - Tested Lambda incident processing and DynamoDB storage.
 - Retrieved a saved incident directly from DynamoDB.
 
-A final integrated test from live SSH detection through DynamoDB storage is still pending.
+### Verified AWS End-to-End Test — October 25, 2026 (UTC)
+
+Six controlled invalid-user SSH attempts were recorded on Ubuntu EC2 and ingested into CloudWatch Logs.
+
+- CloudWatch SSH authentication failure metric reached 6.
+- The SOC-001 alarm entered ALARM at 02:06:45 UTC, approximately 67 seconds after the test.
+- The SNS notification action executed successfully.
+- AWS Lambda executed and recorded `SOC_INCIDENT_STORED`.
+- A matching new security incident was independently confirmed in DynamoDB.
+
+**Limitations:** Detection remains instance-wide rather than per-source-IP. Response is currently `LOG_ONLY`. EventBridge delivery metrics were not independently inspected for this run. Azure integration and automatic containment remain planned.
 
 ## Current Limitations
 
@@ -103,7 +113,7 @@ A final integrated test from live SSH detection through DynamoDB storage is stil
 - [x] Automated security notifications
 - [x] EventBridge and Lambda incident processing
 - [x] DynamoDB incident storage
-- [ ] Complete integrated AWS detection-to-storage validation
+- [x] Complete integrated AWS detection-to-storage validation
 - [ ] Microsoft Azure security telemetry integration
 - [ ] Unified multi-cloud incident processing
 - [ ] Incident enrichment and safe response actions
