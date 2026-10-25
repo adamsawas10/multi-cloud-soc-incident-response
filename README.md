@@ -98,6 +98,19 @@ Six controlled invalid-user SSH attempts were recorded on Ubuntu EC2 and ingeste
 
 **Limitations:** Detection remains instance-wide rather than per-source-IP. Response is currently `LOG_ONLY`. EventBridge delivery metrics were not independently inspected for this run. Azure integration and automatic containment remain planned.
 
+
+### Live SSH Telemetry Validation — October 25, 2026 (UTC)
+
+A controlled, unauthenticated SSH connection was generated locally on the Ubuntu EC2 instance to verify the active security log ingestion pipeline.
+
+**Results:**
+- The OpenSSH service responded successfully.
+- The Ubuntu SSH journal recorded a new connection on an ephemeral local port.
+- The corresponding connection event was independently retrieved from Amazon CloudWatch Logs using AWS CLI.
+- The live EC2-to-CloudWatch telemetry path passed this point-in-time validation.
+
+**Limitations:** This test demonstrates successful ingestion of a new event. It does not establish continuous monitoring availability or test failure recovery. Scheduled heartbeat validation remains planned.
+
 ## Current Limitations
 
 - The detection counts authentication failures across the monitored instance rather than correlating them by source IP.
