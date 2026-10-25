@@ -43,7 +43,10 @@ flowchart TD
 - Real SSH authentication events successfully triggered CloudWatch and SNS alerts.
 - EventBridge successfully invoked Lambda during a controlled alarm test.
 - Lambda successfully stored a test incident in DynamoDB.
-- A final live SSH-to-DynamoDB integrated test is pending.
+- **End-to-end AWS validation passed (October 25, 2026 UTC):** Six controlled SSH authentication failures were ingested into CloudWatch Logs, triggering the CloudWatch alarm at 02:06:45 UTC.
+- Lambda executed successfully and logged `SOC_INCIDENT_STORED`.
+- A matching new incident was independently confirmed in DynamoDB.
+- EventBridge is the configured routing path, but its delivery metrics were not independently verified for this test.
 
 ## Current Limitations
 
