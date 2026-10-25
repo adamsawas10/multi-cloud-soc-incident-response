@@ -118,6 +118,20 @@ A controlled, unauthenticated SSH connection was generated locally on the Ubuntu
 - Incident enrichment and multi-cloud correlation are not yet implemented.
 - Azure integration is not yet complete.
 
+
+### AWS + Azure API-Backed Event Normalization — October 25, 2026 (UTC)
+
+Implemented and tested a Python-based multi-cloud event normalization workflow.
+
+**Verified results:**
+- Retrieved three real Azure Activity Log events through Azure CLI.
+- Sanitized audit data to exclude subscription identifiers, caller identities, and authentication claims.
+- Retrieved the previously validated AWS SOC-001 incident from DynamoDB.
+- Normalized one AWS incident and three Azure audit observations into a common JSON schema.
+- Passed four offline checks and the live-data normalization test with exit code 0.
+
+**Current limitation:** Azure events are transferred manually between cloud environments. Automatic ingestion, continuous monitoring, cross-cloud alerting, and response orchestration remain planned.
+
 ## Roadmap
 
 - [x] AWS cloud infrastructure
