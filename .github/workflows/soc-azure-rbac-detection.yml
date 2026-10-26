@@ -1,0 +1,173 @@
+name: SOC - Azure RBAC detection validation
+
+# Deliberately manual: not continuous monitoring.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: soc-azure-rbac-detection
+  cancel-in-progress: false
+
+jobs:
+  detect-rbac:
+    if: github.repository == 'adamsawas10/multi-cloud-soc-incident-response' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Authenticate to Azure through OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        env:
+          AZURE_LOGIN_PRE_CLEANUP: 'true'
+          AZURE_LOGIN_POST_CLEANUP: 'true'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate RBAC detection logic and check live Activity Logs
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 - <<'PY'
+          """Read-only, manual RBAC-change detection; never print raw events."""
+          import json
+          import os
+          import subprocess
+          import sys
+          from collections import Counter
+          from datetime import datetime
+
+          RBAC_OPERATIONS = {
+              "microsoft.authorization/roleassignments/write": "ROLE_ASSIGNMENT_CREATED",
+              "microsoft.authorization/roleassignments/delete": "ROLE_ASSIGNMENT_DELETED",
+              "microsoft.authorization/roledefinitions/write": "ROLE_DEFINITION_CHANGED",
+              "microsoft.authorization/roledefinitions/delete": "ROLE_DEFINITION_DELETED",
+          }
+
+          def field(value):
+              if isinstance(value, dict):
+                  return str(value.get("value") or value.get("localizedValue") or "")
+              return value if isinstance(value, str) else ""
+
+          def classify(event):
+              if not isinstance(event, dict):
+                  return None
+              operation = field(event.get("operationName")).strip().lower()
+              category = field(event.get("category")).strip().lower()
+              state = field(event.get("status")).strip().lower()
+              if category != "administrative" or operation not in RBAC_OPERATIONS:
+                  return None
+              if state == "succeeded":
+                  outcome = "COMPLETED_REVIEW"
+              elif state == "failed":
+                  outcome = "FAILED_ATTEMPT_REVIEW"
+              elif state in {"started", "accepted"}:
+                  outcome = "PENDING_NOT_CONFIRMED"
+              else:
+                  outcome = "UNKNOWN_STATUS_REVIEW"
+              return RBAC_OPERATIONS[operation], outcome
+
+          def tests():
+              def record(operation, status, category="Administrative"):
+                  return {
+                      "operationName": {"value": operation},
+                      "status": {"value": status},
+                      "category": {"value": category},
+                  }
+              assert classify(record(
+                  "Microsoft.Authorization/roleAssignments/write", "Succeeded"
+              )) == ("ROLE_ASSIGNMENT_CREATED", "COMPLETED_REVIEW")
+              assert classify(record(
+                  "Microsoft.Authorization/roleAssignments/write", "Started"
+              )) == ("ROLE_ASSIGNMENT_CREATED", "PENDING_NOT_CONFIRMED")
+              assert classify(record(
+                  "Microsoft.Authorization/roleDefinitions/delete", "Failed"
+              )) == ("ROLE_DEFINITION_DELETED", "FAILED_ATTEMPT_REVIEW")
+              assert classify(record(
+                  "Microsoft.Authorization/policyAssignments/write", "Started"
+              )) is None
+              assert classify(record(
+                  "Microsoft.Subscription/Subscriptions/write", "Succeeded", "Security"
+              )) is None
+              print("PASS: 5 offline classification tests")
+
+          tests()
+          subscription = os.environ.get("AZURE_SUBSCRIPTION_ID", "")
+          if not subscription:
+              print("INCOMPLETE: Azure subscription configuration missing")
+              sys.exit(2)
+
+          command = [
+              "az", "monitor", "activity-log", "list",
+              "--subscription", subscription,
+              "--offset", "7d", "--max-events", "200",
+              "--output", "json", "--only-show-errors",
+          ]
+          try:
+              response = subprocess.run(
+                  command, check=True, capture_output=True,
+                  text=True, timeout=120,
+              )
+              events = json.loads(response.stdout)
+          except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
+                  FileNotFoundError, json.JSONDecodeError):
+              # Don't echo CLI stderr: it can include account identifiers.
+              print("INCOMPLETE: Azure Activity Log retrieval failed")
+              sys.exit(2)
+
+          if not isinstance(events, list):
+              print("INCOMPLETE: Azure returned an unexpected format")
+              sys.exit(2)
+
+          valid_events = 0
+          findings = Counter()
+          for event in events:
+              if not isinstance(event, dict):
+                  continue
+              operation = field(event.get("operationName"))
+              timestamp = field(event.get("eventTimestamp"))
+              if not operation or not timestamp:
+                  continue
+              try:
+                  datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+              except ValueError:
+                  continue
+              valid_events += 1
+              finding = classify(event)
+              if finding:
+                  findings[finding] += 1
+
+          print("PASS: Azure OIDC authenticated; Activity Log query completed")
+          print(f"Activity Log records returned (7d, max 200): {len(events)}")
+          print(f"Usable timestamped records: {valid_events}")
+
+          if valid_events == 0:
+              print("INCOMPLETE: No usable telemetry to evaluate; no outage inferred")
+              sys.exit(2)
+
+          for kind in RBAC_OPERATIONS.values():
+              for outcome in (
+                  "COMPLETED_REVIEW", "FAILED_ATTEMPT_REVIEW",
+                  "PENDING_NOT_CONFIRMED", "UNKNOWN_STATUS_REVIEW"
+              ):
+                  count = findings[(kind, outcome)]
+                  if count:
+                      print(f"REVIEW SIGNAL: {kind} / {outcome}: {count}")
+
+          if not findings:
+              print("PASS: No RBAC-change review signals in retrieved sample")
+          else:
+              print("PASS: RBAC signals classified for human review, not as attacks")
+
+          print("PRIVACY: Raw events and cloud identifiers not printed or uploaded")
+          print("LIMIT: Manual, 7-day sample; may truncate beyond 200 records")
+          print("LIMIT: One operation can produce multiple Activity Log records")
+          print("LIMIT: No AWS integration or automated response")
+          print("OVERALL: PASS")
+          PY
