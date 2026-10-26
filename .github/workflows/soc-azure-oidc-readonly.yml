@@ -1,0 +1,132 @@
+
+name: SOC - Azure OIDC read-only pilot
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: soc-azure-oidc-pilot
+  cancel-in-progress: false
+
+jobs:
+  validate-azure:
+    if: github.repository == 'adamsawas10/multi-cloud-soc-incident-response' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Authenticate to Azure using GitHub OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        env:
+          AZURE_LOGIN_PRE_CLEANUP: 'true'
+          AZURE_LOGIN_POST_CLEANUP: 'true'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Retrieve and validate Azure Activity Logs
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          from collections import Counter
+
+          subscription = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
+          if not subscription:
+              print('INCOMPLETE: Missing Azure subscription configuration')
+              sys.exit(2)
+
+          command = [
+              'az', 'monitor', 'activity-log', 'list',
+              '--subscription', subscription,
+              '--offset', '7d',
+              '--max-events', '100',
+              '--output', 'json',
+              '--only-show-errors',
+          ]
+
+          try:
+              result = subprocess.run(
+                  command,
+                  check=True,
+                  capture_output=True,
+                  text=True,
+                  timeout=120,
+              )
+              records = json.loads(result.stdout)
+          except (
+              subprocess.CalledProcessError,
+              subprocess.TimeoutExpired,
+              FileNotFoundError,
+              json.JSONDecodeError,
+          ):
+              print('INCOMPLETE: Azure Activity Log read failed')
+              sys.exit(2)
+
+          if not isinstance(records, list):
+              print('INCOMPLETE: Unexpected Activity Log response')
+              sys.exit(2)
+
+          def value(field):
+              if isinstance(field, dict):
+                  return field.get('value') or field.get('localizedValue') or ''
+              return field if isinstance(field, str) else ''
+
+          normalized = []
+
+          for record in records:
+              if not isinstance(record, dict):
+                  continue
+
+              operation = value(record.get('operationName'))
+              timestamp = value(record.get('eventTimestamp'))
+
+              if not operation or not timestamp:
+                  continue
+
+              normalized.append({
+                  'cloud_provider': 'AZURE',
+                  'record_kind': 'AUDIT_OBSERVATION',
+                  'operation': operation,
+                  'event_timestamp': timestamp,
+                  'category': value(record.get('category')),
+                  'operation_status': value(record.get('status')),
+                  'response_action': 'LOG_ONLY',
+              })
+
+          print('PASS: Azure OIDC authentication and log query completed')
+          print(f'Azure events returned: {len(records)}')
+
+          if not normalized:
+              print('INCOMPLETE: No usable Azure events')
+              sys.exit(2)
+
+          counts = Counter(
+              item['operation_status']
+              if item['operation_status'] in
+              {'Started', 'Succeeded', 'Failed', 'Accepted'}
+              else 'Other'
+              for item in normalized
+          )
+
+          print(f'PASS: Normalized {len(normalized)} Azure events')
+
+          for label in ('Started', 'Succeeded', 'Failed', 'Accepted', 'Other'):
+              if counts[label]:
+                  print(f'{label}: {counts[label]}')
+
+          print('PASS: No raw records published')
+          print('NOT TESTED: AWS OIDC or continuous monitoring')
+          print('OVERALL AZURE-ONLY RESULT: PASS')
+          PY
