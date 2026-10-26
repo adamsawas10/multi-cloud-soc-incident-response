@@ -146,9 +146,37 @@ Implemented an automated, read-only Azure RBAC monitoring workflow using GitHub 
 - Classification of privileged-access changes into human-review signals.
 - Privacy-conscious logging without publishing raw Azure audit records.
 
-**Validation:** GitHub Actions run #1 succeeded on October 25, 2026.
+**Validation:** GitHub Actions run #1 succeeded on October 26, 2026.
 
 **Limitations:** The workflow executes manually, queries up to 200 events from a seven-day window, and does not yet provide continuous monitoring, deduplication, incident persistence, or automatic response. A successful run does not establish that a real RBAC change was detected.
+
+
+
+
+
+### SOC-AZ-001 v3 — Cross-Run Detection Tracking (October 26, 2026)
+
+Implemented privacy-conscious Azure RBAC event tracking using GitHub Actions, Microsoft Entra OIDC, and retention-limited checkpoint artifacts.
+
+**Verified Results:**
+- Successfully retrieved 9 real Azure Activity Log events.
+- Inspected 4 RBAC records and grouped them into 2 candidate operations.
+- Confirmed all inspected RBAC records had stable identifiers.
+- First workflow run successfully established the baseline checkpoint.
+- Second workflow run successfully restored the previous checkpoint.
+- Confirmed 0 new review signals and 0 updated review signals during the second run.
+- Both GitHub Actions executions completed successfully.
+- Checkpoint artifacts contain hashed operation identifiers and classification states rather than raw Azure audit records.
+
+**Security Controls:**
+- Read-only Azure permissions with OIDC authentication.
+- No permanent cloud credentials or additional Azure infrastructure.
+- No automatic blocking or resource modifications.
+- Privacy-conscious logging and duplicate-alert suppression.
+
+**Limitations:** Execution remains manual. Checkpoints are retention-limited GitHub Actions artifacts rather than permanent incident storage. Automated scheduling, durable incident persistence, and cross-cloud response orchestration remain future milestones.
+
+
 ## Roadmap
 
 - [x] AWS cloud infrastructure
