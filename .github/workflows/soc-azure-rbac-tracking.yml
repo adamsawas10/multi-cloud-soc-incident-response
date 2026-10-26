@@ -1,0 +1,52 @@
+name: SOC - Azure RBAC tracking (v3 pilot)
+
+# Read-only Azure. Manual trigger. No cron or untrusted PR events.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: soc-az001-v3-main
+  cancel-in-progress: false
+
+jobs:
+  track-rbac:
+    if: github.repository == 'adamsawas10/multi-cloud-soc-incident-response' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - name: Check out vetted main branch
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Run offline tests before cloud access
+        run: python3 soc_az001_tracker.py --self-test
+
+      - name: Authenticate to Azure using temporary OIDC identity
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        env:
+          AZURE_LOGIN_PRE_CLEANUP: 'true'
+          AZURE_LOGIN_POST_CLEANUP: 'true'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Evaluate Activity Logs against previous checkpoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: python3 soc_az001_tracker.py
+
+      - name: Store hashed checkpoint for the next manual run
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: soc-az-001-v3-checkpoint
+          path: state/soc-az-001-checkpoint.json
+          retention-days: 30
+          if-no-files-found: error
