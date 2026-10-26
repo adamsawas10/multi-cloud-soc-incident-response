@@ -1,112 +1,196 @@
-                  if operation_id:
-                      key = ('operation', operation_id, operation, resource)
-                  elif correlation_id:
-                      key = ('correlation', correlation_id, operation, resource)
-                  elif event_id:
-                      key = ('event', event_id)
-                  else:
-                      key = ('index', index)
-                  entry = groups.setdefault(key, {
-                      'kind': RBAC[operation], 'statuses': set()
-                  })
-                  entry['statuses'].add(status)
+name: SOC - Azure RBAC detection validation
 
-              outcomes = Counter()
+# Manual-only, read-only: no cron, no pull_request, no push trigger.
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: soc-azure-rbac-detection
+  cancel-in-progress: false
+
+jobs:
+  validate-rbac-reliability:
+    if: github.repository == 'adamsawas10/multi-cloud-soc-incident-response' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Authenticate to Azure using OIDC
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906
+        env:
+          AZURE_LOGIN_PRE_CLEANUP: 'true'
+          AZURE_LOGIN_POST_CLEANUP: 'true'
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Validate RBAC classifications against Azure Activity Logs
+        shell: bash
+        env:
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          python3 - <<'PY'
+          """Read-only Azure RBAC change checks; summarize without printing raw events."""
+          import json
+          import os
+          import subprocess
+          import sys
+          from collections import Counter
+          from datetime import datetime
+
+          OPERATIONS = {
+              'microsoft.authorization/roleassignments/write': 'ROLE_ASSIGNMENT_WRITE',
+              'microsoft.authorization/roleassignments/delete': 'ROLE_ASSIGNMENT_DELETE',
+              'microsoft.authorization/roledefinitions/write': 'ROLE_DEFINITION_WRITE',
+              'microsoft.authorization/roledefinitions/delete': 'ROLE_DEFINITION_DELETE',
+          }
+
+          def value(obj):
+              if isinstance(obj, dict):
+                  return str(obj.get('value') or obj.get('localizedValue') or '')
+              return obj if isinstance(obj, str) else ''
+
+          def valid_utc(value_):
+              try:
+                  d = datetime.fromisoformat(value_.replace('Z', '+00:00'))
+                  return d.tzinfo is not None
+              except (ValueError, AttributeError):
+                  return False
+
+          def summarize(records):
+              """Within-run best-effort deduplication; not persistent event tracking."""
+              seen_ids = set()
+              groups = {}
+              accepted = 0
+              for index, record in enumerate(records):
+                  if not isinstance(record, dict):
+                      continue
+                  operation = value(record.get('operationName')).lower().strip()
+                  category = value(record.get('category')).lower().strip()
+                  status = value(record.get('status')).lower().strip()
+                  timestamp = value(record.get('eventTimestamp'))
+                  if (category != 'administrative'
+                          or operation not in OPERATIONS
+                          or not valid_utc(timestamp)):
+                      continue
+                  event_id = value(record.get('eventDataId'))
+                  if event_id:
+                      if event_id in seen_ids:
+                          continue
+                      seen_ids.add(event_id)
+                  accepted += 1
+                  op_id = value(record.get('operationId'))
+                  correlation = value(record.get('correlationId'))
+                  resource = value(record.get('resourceId')).lower()
+                  if op_id:
+                      key = ('operation', op_id, operation, resource)
+                  elif correlation:
+                      key = ('correlation', correlation, operation, resource)
+                  else:
+                      key = ('record', event_id or str(index))
+                  entry = groups.setdefault(key, {'kind': OPERATIONS[operation],
+                                                  'states': set()})
+                  entry['states'].add(status)
+
+              counts = Counter()
               for entry in groups.values():
-                  statuses = entry['statuses']
-                  if 'succeeded' in statuses and 'failed' in statuses:
+                  states = entry['states']
+                  if 'succeeded' in states and 'failed' in states:
                       outcome = 'CONFLICTING_REVIEW'
-                  elif 'succeeded' in statuses:
+                  elif 'succeeded' in states:
                       outcome = 'COMPLETED_REVIEW'
-                  elif 'failed' in statuses:
+                  elif 'failed' in states:
                       outcome = 'FAILED_ATTEMPT_REVIEW'
-                  elif statuses and statuses <= {'started', 'accepted'}:
+                  elif states & {'started', 'accepted'}:
                       outcome = 'PENDING_NOT_CONFIRMED'
                   else:
                       outcome = 'UNKNOWN_STATUS_REVIEW'
-                  outcomes[(entry['kind'], outcome)] += 1
-              return accepted, len(groups), outcomes
+                  counts[(entry['kind'], outcome)] += 1
+              return accepted, len(groups), counts
 
-          def example(operation, status, event_id='evt-1', op_id='op-1', category='Administrative'):
-              return {
-                  'operationName': {'value': operation},
-                  'category': {'value': category},
-                  'status': {'value': status},
-                  'eventTimestamp': '2026-10-25T01:00:00Z',
-                  'eventDataId': event_id,
-                  'operationId': op_id,
-                  'resourceId': '/example/roleAssignments/alpha',
-              }
+          def test_logic():
+              def rec(op, state, eid='', oid='op-1', category='Administrative'):
+                  return {'operationName': {'value': op},
+                          'category': {'value': category},
+                          'status': {'value': state},
+                          'eventTimestamp': '2026-10-25T01:35:49Z',
+                          'eventDataId': eid, 'operationId': oid,
+                          'resourceId': '/redacted/test'}
+              write = 'Microsoft.Authorization/roleAssignments/write'
+              delete = 'Microsoft.Authorization/roleAssignments/delete'
+              policy = 'Microsoft.Authorization/policyAssignments/write'
+              def only_kind(rows, kind):
+                  accepted, grouped, counts = summarize(rows)
+                  assert accepted == len(rows) and grouped == 1
+                  assert counts[kind] == 1
+              only_kind([rec(write, 'Succeeded', 'a')],
+                        ('ROLE_ASSIGNMENT_WRITE', 'COMPLETED_REVIEW'))
+              only_kind([rec(delete, 'Failed', 'b')],
+                        ('ROLE_ASSIGNMENT_DELETE', 'FAILED_ATTEMPT_REVIEW'))
+              only_kind([rec(write, 'Started', 'c')],
+                        ('ROLE_ASSIGNMENT_WRITE', 'PENDING_NOT_CONFIRMED'))
+              only_kind([rec(write, 'Unrecognized', 'd')],
+                        ('ROLE_ASSIGNMENT_WRITE', 'UNKNOWN_STATUS_REVIEW'))
+              a = rec(write, 'Started', '1')
+              b = rec(write, 'Succeeded', '2')
+              assert summarize([a, b])[1] == 1
+              assert summarize([a, b])[2][('ROLE_ASSIGNMENT_WRITE', 'COMPLETED_REVIEW')] == 1
+              assert summarize([b, b])[0] == 1
+              assert summarize([rec(write, 'Succeeded', '3'),
+                                rec(write, 'Failed', '4')])[2][
+                                    ('ROLE_ASSIGNMENT_WRITE', 'CONFLICTING_REVIEW')] == 1
+              assert summarize([rec(policy, 'Started', '5')])[1] == 0
+              assert summarize([rec(write, 'Succeeded', '6', category='Security')])[1] == 0
+              print('PASS: 10 offline classification and correlation checks')
 
-          def self_test():
-              role_write = 'Microsoft.Authorization/roleAssignments/write'
-              role_delete = 'Microsoft.Authorization/roleDefinitions/delete'
-              policy_write = 'Microsoft.Authorization/policyAssignments/write'
-              _, n, counts = summarize([example(role_write, 'Succeeded')])
-              assert n == 1 and counts[('ROLE_ASSIGNMENT_WRITE', 'COMPLETED_REVIEW')] == 1
-              _, n, counts = summarize([example(role_write, 'Started')])
-              assert n == 1 and counts[('ROLE_ASSIGNMENT_WRITE', 'PENDING_NOT_CONFIRMED')] == 1
-              _, n, counts = summarize([example(role_delete, 'Failed')])
-              assert n == 1 and counts[('ROLE_DEFINITION_DELETE', 'FAILED_ATTEMPT_REVIEW')] == 1
-              accepted, n, _ = summarize([example(policy_write, 'Started')])
-              assert accepted == 0 and n == 0
-              accepted, n, _ = summarize([example(role_write, 'Succeeded', category='Security')])
-              assert accepted == 0 and n == 0
-              a = example(role_write, 'Started', event_id='evt-a')
-              b = example(role_write, 'Succeeded', event_id='evt-b')
-              accepted, n, counts = summarize([a, b])
-              assert accepted == 2 and n == 1 and counts[('ROLE_ASSIGNMENT_WRITE', 'COMPLETED_REVIEW')] == 1
-              accepted, n, _ = summarize([a, a])
-              assert accepted == 1 and n == 1
-              c = example(role_write, 'Failed', event_id='evt-c')
-              accepted, n, counts = summarize([b, c])
-              assert n == 1 and counts[('ROLE_ASSIGNMENT_WRITE', 'CONFLICTING_REVIEW')] == 1
-              d = example(role_write, 'Succeeded', event_id='evt-d', op_id='op-2')
-              accepted, n, _ = summarize([b, d])
-              assert n == 2
-              print('PASS: 9 offline classification and correlation tests')
-
-          self_test()
-          subscription = os.environ.get('AZURE_SUBSCRIPTION_ID', '')
+          test_logic()
+          subscription = os.environ.get('AZURE_SUBSCRIPTION_ID', '').strip()
           if not subscription:
-              print('INCOMPLETE: Azure subscription configuration missing')
+              print('INCOMPLETE: Azure subscription configuration is missing')
               sys.exit(2)
 
-          command = [
-              'az', 'monitor', 'activity-log', 'list',
-              '--subscription', subscription,
-              '--offset', '7d', '--max-events', '500',
-              '--output', 'json', '--only-show-errors',
-          ]
           try:
               response = subprocess.run(
-                  command, check=True, capture_output=True,
-                  text=True, timeout=120,
-              )
+                  ['az', 'monitor', 'activity-log', 'list',
+                   '--subscription', subscription,
+                   '--offset', '7d', '--max-events', '500',
+                   '--output', 'json', '--only-show-errors'],
+                  check=True, capture_output=True, text=True, timeout=120)
               events = json.loads(response.stdout)
           except (subprocess.CalledProcessError, subprocess.TimeoutExpired,
                   FileNotFoundError, json.JSONDecodeError):
-              # CLI stderr and raw audit records can contain identifiers: do not print.
+              # Intentionally do not expose Azure CLI stderr or raw events.
               print('INCOMPLETE: Azure Activity Log retrieval failed')
               sys.exit(2)
 
           if not isinstance(events, list):
-              print('INCOMPLETE: Azure returned an unexpected format')
+              print('INCOMPLETE: Unexpected Azure Activity Log response')
               sys.exit(2)
 
-          accepted, grouped, outcomes = summarize(events)
-          print('PASS: Azure OIDC authenticated and Activity Log query completed')
-          print(f'Activity Log records returned (7d, max 500): {len(events)}')
-          print(f'RBAC records accepted: {accepted}')
-          print(f'Candidate RBAC operations after in-run grouping: {grouped}')
+          usable = sum(1 for e in events if isinstance(e, dict)
+                       and valid_utc(value(e.get('eventTimestamp')))
+                       and value(e.get('operationName')))
+          if not usable:
+              print('INCOMPLETE: No usable Activity Log events in the query window')
+              sys.exit(2)
 
-          for (kind, outcome), count in sorted(outcomes.items()):
+          accepted, grouped, findings = summarize(events)
+          print('PASS: Azure OIDC authentication and Activity Log read completed')
+          print(f'Activity Log records returned: {len(events)}')
+          print(f'Usable timestamped records: {usable}')
+          print(f'RBAC records classified: {accepted}')
+          print(f'Candidate RBAC operations grouped: {grouped}')
+          for (kind, outcome), count in sorted(findings.items()):
               print(f'REVIEW SIGNAL: {kind} / {outcome}: {count}')
-          if not outcomes:
-              print('PASS: No RBAC-change review signals in retrieved sample')
-
-          print('PRIVACY: No raw events or account identifiers printed/uploaded')
-          print('LIMIT: No persistent cross-run deduplication or alert delivery')
-          print('LIMIT: Manual, 7-day sample; up to 500 records')
+          if not findings:
+              print('PASS: No RBAC change signals in this sample')
+          print('PRIVACY: No raw events or identifiers printed or uploaded')
+          print('LIMIT: Manual check, 7-day window, max 500 records')
+          print('LIMIT: No cross-run deduplication, alerting, or AWS OIDC')
           print('OVERALL: PASS')
           PY
