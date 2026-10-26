@@ -132,6 +132,23 @@ Implemented and tested a Python-based multi-cloud event normalization workflow.
 
 **Current limitation:** Azure events are transferred manually between cloud environments. Automatic ingestion, continuous monitoring, cross-cloud alerting, and response orchestration remain planned.
 
+
+
+
+### SOC-AZ-001 — Azure RBAC Change Detection - October 26, 2026 (UTC)
+
+Implemented an automated, read-only Azure RBAC monitoring workflow using GitHub Actions and Microsoft Entra OIDC authentication.
+
+**Verified capabilities:**
+- Successful GitHub-to-Azure federated authentication.
+- Azure Activity Log retrieval and detection workflow execution.
+- Five built-in tests covering successful, pending, failed, and unrelated administrative operations.
+- Classification of privileged-access changes into human-review signals.
+- Privacy-conscious logging without publishing raw Azure audit records.
+
+**Validation:** GitHub Actions run #1 succeeded on October 25, 2026.
+
+**Limitations:** The workflow executes manually, queries up to 200 events from a seven-day window, and does not yet provide continuous monitoring, deduplication, incident persistence, or automatic response. A successful run does not establish that a real RBAC change was detected.
 ## Roadmap
 
 - [x] AWS cloud infrastructure
