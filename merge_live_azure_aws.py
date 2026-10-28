@@ -1,19 +1,4 @@
 #!/usr/bin/env python3
-"""Read-only, operator-mediated live Azure Activity Log + AWS incident normalizer.
-
-Usage (AWS CloudShell, region us-east-2):
-    python3 ~/merge_live_azure_aws.py
-    echo "Exit code: $?"
-
-The Azure input comes from a fresh Azure CLI query in AZURE Cloud Shell:
-    az monitor activity-log list --offset 7d --max-events 100 \
-      --select eventTimestamp category eventName operationName status level resourceType \
-      --output json > azure_activity_live_safe.json
-
-Download that JSON from Azure Cloud Shell's Manage files > Download, then upload
-it and this script as two separate, ordinary files to AWS CloudShell.
-No Azure credentials are transferred. No AWS/Azure resources are created.
-"""
 import argparse
 import json
 import sys
