@@ -177,6 +177,21 @@ Implemented privacy-conscious Azure RBAC event tracking using GitHub Actions, Mi
 **Limitations:** Execution remains manual. Checkpoints are retention-limited GitHub Actions artifacts rather than permanent incident storage. Automated scheduling, durable incident persistence, and cross-cloud response orchestration remain future milestones.
 
 
+### SOC-INT-001 — Unified AWS + Azure Incident Snapshot (October 27, 2026)
+
+Successfully implemented and validated a read-only Python collector that combines AWS security incidents with Azure RBAC audit observations.
+
+**Verified results:**
+- Retrieved one verified AWS SOC-001 incident from Amazon DynamoDB.
+- Loaded two Azure RBAC observations from the existing GitHub Actions checkpoint.
+- Normalized both providers' records into one unified SOC dataset.
+- Passed offline validation checks and completed execution with exit code 0.
+- Generated a local unified JSON snapshot containing three records.
+- Avoided displaying raw Azure audit data and AWS incident identifiers in terminal output.
+
+**Limitations:** The integration is manually initiated and uses a downloaded Azure checkpoint. Checkpoint provenance was not independently authenticated. Automatic cross-cloud delivery, centralized durable storage for both providers, continuous monitoring, and coordinated response remain to be implemented.
+
+
 ## Roadmap
 
 - [x] AWS cloud infrastructure
