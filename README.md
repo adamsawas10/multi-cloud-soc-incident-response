@@ -1,7 +1,7 @@
 
 # Multi-Cloud SOC & Automated Incident Response Platform
 
-**Status:** In Progress | AWS Implementation Operational | Azure Integration Planned
+**Status:** In Progress | AWS Implementation Operational | Azure Integration implemented 
 
 ## Overview
 
